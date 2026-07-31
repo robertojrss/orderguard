@@ -4,7 +4,7 @@ client_id = "0aa90c10c29ac159b501ec72365cdc51"
 
 name = "OrderGuard"
 
-application_url = "https://allright-solutions.online"
+application_url = "https://orderguard-production.up.railway.app"
 
 embedded = true
 
@@ -29,5 +29,5 @@ use_legacy_install_flow = false
 
 [auth]
 redirect_urls = [
-  "https://allright-solutions.online/auth/callback"
+  "https://orderguard-production.up.railway.app/auth/callback"
 ]
