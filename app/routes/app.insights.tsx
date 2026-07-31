@@ -1,7 +1,12 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { useFetcher } from "react-router";
+import { useState } from "react";
 import { authenticate } from "../shopify.server";
+import { requireFeature } from "../services/feature-access.server";
+
 import { buildInsights } from "../services/insights.server";
+
+import OrderFilters from "../components/OrderFilters";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
@@ -9,9 +14,52 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
-  const data = await buildInsights(admin);
-  return { type: "scan" as const, ...data };
+
+  const ctx = await requireFeature({
+    request,
+    feature: "insights",
+  });
+
+
+  const formData =
+    await request.formData();
+
+
+  const limit =
+    Number(
+      formData.get("limit") ?? 250
+    );
+
+
+  const lastDaysValue =
+    formData.get("lastDays");
+
+
+  const lastDays =
+    lastDaysValue
+      ? Number(lastDaysValue)
+      : undefined;
+
+
+
+  const data =
+    await buildInsights(
+      ctx.admin,
+      {
+        limit,
+        lastDays,
+      }
+    );
+
+
+  await ctx.finish(data.summary.totalOrders);
+
+
+  return {
+    type:"scan" as const,
+    ...data,
+  };
+
 };
 
 const cardStyle: React.CSSProperties = {
@@ -61,6 +109,13 @@ const barFillStyle = (percentage: number): React.CSSProperties => ({
 });
 
 export default function InsightsPage() {
+    const [filters, setFilters] =
+    useState<{
+      limit:number;
+      lastDays?:number;
+    }>({
+      limit:250,
+    });
   const fetcher = useFetcher<typeof action>();
 
   const isLoading = fetcher.state !== "idle";
@@ -78,8 +133,28 @@ export default function InsightsPage() {
           buy. This module never edits order data.
         </s-paragraph>
 
-        <div style={{ marginTop: 16, marginBottom: 20 }}>
-          <fetcher.Form method="post">
+<div style={{ marginTop: 16, marginBottom: 20 }}>
+
+
+  <OrderFilters
+    values={filters}
+    onChange={setFilters}
+  />
+
+
+  <fetcher.Form method="post">
+    <input
+  type="hidden"
+  name="limit"
+  value={filters.limit}
+/>
+
+
+<input
+  type="hidden"
+  name="lastDays"
+  value={filters.lastDays ?? ""}
+/>
             <s-button type="submit" disabled={isLoading}>
               {isLoading ? "Analyzing..." : "Analyze Orders"}
             </s-button>

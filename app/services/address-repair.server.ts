@@ -1,3 +1,9 @@
+import type {
+  GraphqlClient,
+  RepairResult,
+  RepairSuccess,
+} from "./repair-engine.server";
+
 export interface ShippingAddress {
   firstName: string | null;
   lastName: string | null;
@@ -10,6 +16,7 @@ export interface ShippingAddress {
   zip: string | null;
   phone: string | null;
 }
+
 
 export interface ShopifyOrder {
   id: string;
@@ -62,16 +69,16 @@ function titleCase(value: string) {
 }
 
 
-/*
-BR:
-
-Rua das Flores 123 Apto 4
-
-vira:
-
-Rua Das Flores 123
-Apto 4
-*/
+/**
+ * Brazil:
+ *
+ * Rua das Flores 123 Apto 4
+ *
+ * =>
+ *
+ * Rua Das Flores 123
+ * Apto 4
+ */
 function normalizeBrazilAddress(
   address1: string,
   address2: string | null
@@ -124,16 +131,16 @@ function normalizeBrazilAddress(
 
 
 
-/*
-US:
-
-123 Main Street Apt 4
-
-vira:
-
-123 Main Street
-Apt 4
-*/
+/**
+ * United States:
+ *
+ * 123 Main Street Apt 4
+ *
+ * =>
+ *
+ * 123 Main Street
+ * Apt 4
+ */
 function normalizeUSAddress(
   address1: string,
   address2: string | null
@@ -210,7 +217,6 @@ export function formatAddress(
   };
 
 
-
   if (enableCountryRules) {
 
 
@@ -254,18 +260,20 @@ export function buildEligibleAddressList(
 
   for (const order of orders) {
 
+    const address =
+      order.shippingAddress;
 
-    if (!order.shippingAddress?.address1)
+
+    if (!address?.address1)
       continue;
 
 
 
     const formatted =
       formatAddress(
-        order.shippingAddress,
+        address,
         enableCountryRules
       );
-
 
 
     if (!formatted)
@@ -274,14 +282,9 @@ export function buildEligibleAddressList(
 
 
     if (
-      formatted.address1 !== order.shippingAddress.address1 ||
-      formatted.address2 !== order.shippingAddress.address2
+      formatted.address1 !== address.address1 ||
+      formatted.address2 !== address.address2
     ) {
-
-
-      const hasNumber =
-        /\d/.test(formatted.address1);
-
 
 
       eligible.push({
@@ -289,7 +292,7 @@ export function buildEligibleAddressList(
         order,
 
         originalAddress1:
-          order.shippingAddress.address1,
+          address.address1,
 
         recommendedAddress1:
           formatted.address1,
@@ -298,9 +301,9 @@ export function buildEligibleAddressList(
           formatted.address2,
 
         warning:
-          hasNumber
-            ? undefined
-            : "Address may be missing a number"
+          !/\d/.test(formatted.address1)
+            ? "Address may be missing a number"
+            : undefined
 
       });
 
@@ -314,34 +317,13 @@ export function buildEligibleAddressList(
 }
 
 
-
-
-export interface RepairSuccess {
-  id: string;
-  name: string;
-}
-
-
-export interface RepairStoppedAt {
-  id: string;
-  name: string;
-  error: string;
-}
-
-
-export interface RepairResult {
-  succeeded: RepairSuccess[];
-  stoppedAt: RepairStoppedAt | null;
-}
-
-
-
 export const ORDERS_BY_ID_QUERY = `#graphql
 query getOrdersByIdsForAddressRepair($ids: [ID!]!) {
   nodes(ids: $ids) {
     ... on Order {
       id
       name
+
       shippingAddress {
         firstName
         lastName
@@ -364,10 +346,12 @@ query getOrdersByIdsForAddressRepair($ids: [ID!]!) {
 export const ORDER_UPDATE_MUTATION = `#graphql
 mutation repairOrderAddress($input: OrderInput!) {
   orderUpdate(input: $input) {
+
     order {
       id
       name
     }
+
     userErrors {
       field
       message
@@ -426,21 +410,6 @@ function buildOrderUpdateInput(
 
 }
 
-
-
-type GraphqlClient = {
-
-  graphql: (
-    query: string,
-    options?: {
-      variables?: Record<string, any>
-    }
-  ) => Promise<Response>;
-
-};
-
-
-
 export async function repairOrdersByIds(
   admin: GraphqlClient,
   orderIds: string[],
@@ -448,7 +417,7 @@ export async function repairOrdersByIds(
 ): Promise<RepairResult> {
 
 
-  if (orderIds.length === 0) {
+  if(orderIds.length === 0) {
 
     return {
       succeeded: [],
@@ -458,27 +427,52 @@ export async function repairOrdersByIds(
   }
 
 
-
   const response =
     await admin.graphql(
       ORDERS_BY_ID_QUERY,
       {
-        variables: {
+        variables:{
           ids: orderIds
         }
       }
     );
 
 
-
-  const data =
+  const result =
     await response.json();
+
+
+
+  if(result.errors) {
+
+    return {
+
+      succeeded: [],
+
+      stoppedAt: {
+
+        id:"",
+        name:"GraphQL Error",
+
+        error:
+          result.errors
+            .map(
+              (e:{message:string}) =>
+                e.message
+            )
+            .join("; ")
+
+      }
+
+    };
+
+  }
 
 
 
   const orders =
     parseOrderNodes(
-      data.data.nodes
+      result.data?.nodes ?? []
     );
 
 
@@ -495,7 +489,7 @@ export async function repairOrdersByIds(
 
 
 
-  for (const item of eligible) {
+  for(const item of eligible) {
 
 
     const input =
@@ -511,7 +505,7 @@ export async function repairOrdersByIds(
       await admin.graphql(
         ORDER_UPDATE_MUTATION,
         {
-          variables: {
+          variables:{
             input
           }
         }
@@ -519,32 +513,60 @@ export async function repairOrdersByIds(
 
 
 
-    const result =
+    const mutationResult =
       await mutationResponse.json();
 
 
 
-    const userErrors =
-      result.data?.orderUpdate?.userErrors ?? [];
-
-
-
-    if (userErrors.length > 0) {
+    if(mutationResult.errors) {
 
       return {
 
         succeeded,
 
-        stoppedAt: {
+        stoppedAt:{
 
-          id: item.order.id,
+          id:item.order.id,
 
-          name: item.order.name,
+          name:item.order.name,
+
+          error:
+            mutationResult.errors
+              .map(
+                (e:{message:string}) =>
+                  e.message
+              )
+              .join("; ")
+
+        }
+
+      };
+
+    }
+
+
+
+    const userErrors =
+      mutationResult.data?.orderUpdate?.userErrors ?? [];
+
+
+
+    if(userErrors.length > 0) {
+
+      return {
+
+        succeeded,
+
+        stoppedAt:{
+
+          id:item.order.id,
+
+          name:item.order.name,
 
           error:
             userErrors
               .map(
-                (e: {message:string}) =>
+                (e:{message:string}) =>
                   e.message
               )
               .join("; ")
@@ -559,11 +581,12 @@ export async function repairOrdersByIds(
 
     succeeded.push({
 
-      id: item.order.id,
+      id:item.order.id,
 
-      name: item.order.name
+      name:item.order.name
 
     });
+
 
   }
 
@@ -573,7 +596,7 @@ export async function repairOrdersByIds(
 
     succeeded,
 
-    stoppedAt: null
+    stoppedAt:null
 
   };
 

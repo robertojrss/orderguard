@@ -4,9 +4,15 @@ import { authenticate } from "../shopify.server";
 import {
   buildEligibleEmailList,
   repairOrdersByIds,
-  type ShopifyOrder,
 } from "../services/email-repair.server";
-import { ORDERS_QUERY } from "../services/orders.server";
+import OrderFilters from "../components/OrderFilters";
+import { useState } from "react";
+import { requireFeature } from "../services/feature-access.server";
+
+import {
+  getOrders,
+  type ShopifyOrder,
+} from "../services/orders.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
@@ -14,20 +20,48 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const ctx = await requireFeature({
+    request,
+    feature: "email",
+  });
   const formData = await request.formData();
   const intent = formData.get("intent");
 
   if (intent === "repair") {
     const orderIds = formData.getAll("orderIds") as string[];
-    const result = await repairOrdersByIds(admin, orderIds);
+    const result = await repairOrdersByIds(ctx.admin, orderIds);
+    await ctx.finish(result.succeeded.length);
     return { type: "repair" as const, ...result };
   }
 
-  const response = await admin.graphql(ORDERS_QUERY);
-  const data = await response.json();
-  const orders: ShopifyOrder[] = data.data.orders.nodes;
+const limit =
+  Number(
+    formData.get("limit") ?? 250
+  );
+
+
+const lastDaysValue =
+  formData.get("lastDays");
+
+
+const lastDays =
+  lastDaysValue
+    ? Number(lastDaysValue)
+    : undefined;
+
+
+
+const orders: ShopifyOrder[] =
+  await getOrders(
+    ctx.admin,
+    {
+      limit,
+      lastDays,
+    }
+  );
   const eligible = buildEligibleEmailList(orders);
+
+  await ctx.finish(orders.length);
 
   return {
     type: "scan" as const,
@@ -53,6 +87,16 @@ const RISK_LABEL: Record<string, string> = {
 };
 
 export default function EmailPage() {
+
+
+const [filters, setFilters] =
+  useState<{
+    limit:number;
+    lastDays?:number;
+  }>({
+    limit:250,
+  });
+
   const scanFetcher = useFetcher<typeof action>();
   const repairFetcher = useFetcher<typeof action>();
 
@@ -76,8 +120,32 @@ export default function EmailPage() {
         </s-paragraph>
 
         <div style={{ marginTop: 16, marginBottom: 20 }}>
+
+<OrderFilters
+  values={filters}
+  onChange={setFilters}
+/>
+
           <scanFetcher.Form method="post">
-            <input type="hidden" name="intent" value="scan" />
+<input
+  type="hidden"
+  name="intent"
+  value="scan"
+/>
+
+
+<input
+  type="hidden"
+  name="limit"
+  value={filters.limit}
+/>
+
+
+<input
+  type="hidden"
+  name="lastDays"
+  value={filters.lastDays ?? ""}
+/>
             <s-button type="submit" disabled={isScanning}>
               {isScanning ? "Analyzing..." : "Analyze Orders"}
             </s-button>

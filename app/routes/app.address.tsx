@@ -1,14 +1,21 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { useFetcher } from "react-router";
 import { authenticate } from "../shopify.server";
+import { useState } from "react";
+
+import { requireFeature } from "../services/feature-access.server";
+
+import OrderFilters from "../components/OrderFilters";
 
 import {
   buildEligibleAddressList,
   repairOrdersByIds,
-  type ShopifyOrder,
 } from "../services/address-repair.server";
 
-import { ORDERS_QUERY } from "../services/orders.server";
+import {
+  getOrders,
+  type ShopifyOrder,
+} from "../services/orders.server";
 
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -18,7 +25,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+
+  const ctx = await requireFeature({
+    request,
+    feature: "address",
+  });
 
   const formData = await request.formData();
 
@@ -37,10 +48,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     const result =
       await repairOrdersByIds(
-        admin,
+        ctx.admin,
         orderIds,
         enableCountryRules
       );
+
+
+    await ctx.finish(
+      result.succeeded.length
+    );
 
 
     return {
@@ -56,16 +72,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 
 
-  const response =
-    await admin.graphql(ORDERS_QUERY);
+  const limit =
+    Number(
+      formData.get("limit") ?? 250
+    );
 
 
-  const data =
-    await response.json();
+  const lastDaysValue =
+    formData.get("lastDays");
+
+
+  const lastDays =
+    lastDaysValue
+      ? Number(lastDaysValue)
+      : undefined;
+
 
 
   const orders: ShopifyOrder[] =
-    data.data.orders.nodes;
+    await getOrders(
+      ctx.admin,
+      {
+        limit,
+        lastDays,
+      }
+    );
 
 
 
@@ -77,14 +108,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 
 
+  await ctx.finish(
+    orders.length
+  );
+
+
+
   return {
+
     type: "scan" as const,
+
 
     totalScanned:
       orders.length,
 
+
     countryRules:
       enableCountryRules,
+
 
     eligible:
       eligible.map(
@@ -94,7 +135,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           recommendedAddress1,
           recommendedAddress2,
         }) => ({
+
           id: order.id,
+
           name: order.name,
 
           originalAddress1,
@@ -102,8 +145,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           recommendedAddress1,
 
           recommendedAddress2,
+
         })
       ),
+
   };
 
 };
@@ -111,6 +156,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 
 export default function AddressPage() {
+
+
+  const [filters, setFilters] =
+    useState<{
+      limit:number;
+      lastDays?:number;
+    }>({
+      limit:250,
+    });
+
 
 
   const scanFetcher =
@@ -143,9 +198,7 @@ export default function AddressPage() {
       ? repairFetcher.data
       : null;
 
-
-
-  return (
+        return (
 
     <s-page heading="Order Repair">
 
@@ -168,6 +221,13 @@ export default function AddressPage() {
         >
 
 
+          <OrderFilters
+            values={filters}
+            onChange={setFilters}
+          />
+
+
+
           <scanFetcher.Form method="post">
 
 
@@ -176,6 +236,21 @@ export default function AddressPage() {
               name="intent"
               value="scan"
             />
+
+
+            <input
+              type="hidden"
+              name="limit"
+              value={filters.limit}
+            />
+
+
+            <input
+              type="hidden"
+              name="lastDays"
+              value={filters.lastDays ?? ""}
+            />
+
 
 
             <label
@@ -222,6 +297,7 @@ export default function AddressPage() {
 
 
 
+
         {
           scanResult && (
 
@@ -234,7 +310,6 @@ export default function AddressPage() {
                   margin:"20px 0",
                 }}
               />
-
 
 
               <s-paragraph>
@@ -272,7 +347,6 @@ export default function AddressPage() {
           scanResult &&
           scanResult.eligible.length > 0 && (
 
-
           <repairFetcher.Form method="post">
 
 
@@ -309,7 +383,6 @@ export default function AddressPage() {
 
 
                   <s-table-header>
-                    
                   </s-table-header>
 
 
@@ -418,6 +491,7 @@ export default function AddressPage() {
 
 
 
+
             <div
               style={{
                 marginTop:16,
@@ -449,7 +523,6 @@ export default function AddressPage() {
 
           )
         }
-
 
 
 
@@ -491,6 +564,7 @@ export default function AddressPage() {
 
 
 
+
               {
                 repairResult.stoppedAt && (
 
@@ -525,6 +599,7 @@ export default function AddressPage() {
 
           )
         }
+
 
 
 
