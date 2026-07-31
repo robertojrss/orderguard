@@ -1,4 +1,5 @@
-# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+# Learn more about configuring your app at:
+# https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "0aa90c10c29ac159b501ec72365cdc51"
 
@@ -14,13 +15,24 @@ automatically_update_urls_on_dev = true
 [webhooks]
 api_version = "2026-07"
 
+# Mandatory app webhook
 [[webhooks.subscriptions]]
-uri = "/webhooks/app/uninstalled"
 topics = ["app/uninstalled"]
+uri = "/webhooks/app/uninstalled"
 
+# Recommended app webhook
 [[webhooks.subscriptions]]
-uri = "/webhooks/app/scopes_update"
 topics = ["app/scopes_update"]
+uri = "/webhooks/app/scopes_update"
+
+# Mandatory compliance webhooks (GDPR)
+[[webhooks.subscriptions]]
+compliance_topics = [
+  "customers/data_request",
+  "customers/redact",
+  "shop/redact",
+]
+uri = "/webhooks/compliance"
 
 [access_scopes]
 scopes = "read_orders,write_orders,read_customers"
